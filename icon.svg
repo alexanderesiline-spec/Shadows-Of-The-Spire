@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <rect width="128" height="128" fill="#1a1a2e"/>
+  <!-- Spire -->
+  <polygon points="64,8 80,80 48,80" fill="#6a0dad" opacity="0.9"/>
+  <polygon points="64,8 72,50 56,50" fill="#9b30ff" opacity="0.7"/>
+  <!-- Base -->
+  <rect x="44" y="78" width="40" height="20" fill="#4a3060"/>
+  <rect x="38" y="96" width="52" height="12" fill="#3a2050"/>
+  <!-- Shadow glow -->
+  <ellipse cx="64" cy="115" rx="35" ry="6" fill="#6a0dad" opacity="0.4"/>
+  <!-- Eye -->
+  <circle cx="64" cy="44" r="5" fill="#ff4444" opacity="0.9"/>
+  <circle cx="64" cy="44" r="2" fill="#ffaa00"/>
+</svg>

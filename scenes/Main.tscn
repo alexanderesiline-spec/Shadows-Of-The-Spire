@@ -1,0 +1,18 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://scripts/Main.gd" id="1_main"]
+[ext_resource type="PackedScene" path="res://scenes/WorldMap.tscn" id="2_worldmap"]
+[ext_resource type="PackedScene" path="res://scenes/Player.tscn" id="3_player"]
+[ext_resource type="Script" path="res://scripts/ui/HUD.gd" id="4_hud"]
+
+[node name="Main" type="Node2D"]
+script = ExtResource("1_main")
+
+[node name="WorldMap" parent="." instance=ExtResource("2_worldmap")]
+
+[node name="Player" parent="." instance=ExtResource("3_player")]
+position = Vector2(310.0, 280.0)
+
+[node name="HUD" type="CanvasLayer" parent="."]
+layer = 10
+script = ExtResource("4_hud")
