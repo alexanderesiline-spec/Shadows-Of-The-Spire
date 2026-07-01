@@ -1,7 +1,7 @@
 extends Node
 
-# 1 real second = 1 in-game hour. Adjust SECONDS_PER_HOUR to speed up/slow down.
-const SECONDS_PER_HOUR: float = 1.0
+# 1 real second = 1 in-game hour. Adjustable at runtime (HUD +/- keys).
+var SECONDS_PER_HOUR: float = 1.0
 const HOURS_PER_DAY: int = 24
 const DAYS_PER_SEASON: int = 7
 const SEASONS: Array[String] = ["Spring", "Summer", "Autumn", "Winter"]
@@ -48,6 +48,19 @@ func get_season() -> String:
 
 func is_night() -> bool:
 	return hour < 6 or hour >= 20
+
+# Coarse phase used by NPC schedules — readable buckets instead of raw hours.
+func get_day_phase() -> String:
+	if hour >= 5 and hour < 8:
+		return "Dawn"
+	elif hour >= 8 and hour < 12:
+		return "Morning"
+	elif hour >= 12 and hour < 17:
+		return "Day"
+	elif hour >= 17 and hour < 20:
+		return "Dusk"
+	else:
+		return "Night"
 
 func get_time_string() -> String:
 	var period = "Night" if is_night() else ("Dawn" if hour < 9 else ("Dusk" if hour >= 17 else "Day"))

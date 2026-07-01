@@ -1,17 +1,19 @@
 extends CharacterBody2D
 
-const SPEED: float = 160.0
-const INTERACT_RADIUS: float = 70.0
+# A free-roaming observer/participant. In this build the player mostly wanders
+# and inspects — the world runs with or without them. Faction alignment and
+# real interaction come in a later phase.
 
-var inventory: Dictionary = {"food": 10, "gold": 5, "wood": 0, "herb": 0}
-var _nearby_entity: Node = null
+const SPEED: float = 170.0
+const INTERACT_RADIUS: float = 90.0
+
+var _nearby_npc: Node = null
 
 func _ready() -> void:
 	add_to_group("player")
 	_build_visual()
 
 func _build_visual() -> void:
-	# Player body (upright figure)
 	var body := Polygon2D.new()
 	body.polygon = PackedVector2Array([
 		Vector2(-7, 10), Vector2(7, 10),
@@ -22,7 +24,6 @@ func _build_visual() -> void:
 	body.color = Color(0.2, 0.55, 1.0)
 	add_child(body)
 
-	# Head
 	var head := Polygon2D.new()
 	head.polygon = PackedVector2Array([
 		Vector2(-5, -14), Vector2(5, -14),
@@ -32,7 +33,7 @@ func _build_visual() -> void:
 	add_child(head)
 
 	var camera := Camera2D.new()
-	camera.zoom = Vector2(1.6, 1.6)
+	camera.zoom = Vector2(1.5, 1.5)
 	add_child(camera)
 
 func _physics_process(_delta: float) -> void:
@@ -46,44 +47,29 @@ func _physics_process(_delta: float) -> void:
 	_update_nearby()
 
 func _unhandled_input(event: InputEvent) -> void:
-	if event.is_action_pressed("interact") and _nearby_entity != null:
+	if event.is_action_pressed("interact") and _nearby_npc != null:
 		_interact()
 
 func _update_nearby() -> void:
-	_nearby_entity = null
+	_nearby_npc = null
 	var best_dist := INTERACT_RADIUS
-
-	for v in WorldSimulation.villages:
-		if is_instance_valid(v):
-			var d: float = global_position.distance_to(v.global_position)
+	for n in WorldSimulation.npcs:
+		if is_instance_valid(n):
+			var d: float = global_position.distance_to(n.global_position)
 			if d < best_dist:
 				best_dist = d
-				_nearby_entity = v
+				_nearby_npc = n
 
-	for f in WorldSimulation.factions:
-		if is_instance_valid(f):
-			var d: float = global_position.distance_to(f.global_position)
-			if d < best_dist:
-				best_dist = d
-				_nearby_entity = f
+func get_nearby_npc() -> Node:
+	return _nearby_npc
 
 func _interact() -> void:
-	if _nearby_entity == null:
+	if _nearby_npc == null:
 		return
-
-	var info: String
-	if _nearby_entity.has_method("get_status_short"):
-		info = _nearby_entity.get_status_short()
-	else:
-		info = str(_nearby_entity.name)
-
-	EventBus.player_interacted.emit(str(_nearby_entity.name), info)
-	EventBus.log_info("[You] %s" % info)
+	EventBus.player_interacted.emit(_nearby_npc.npc_name, _nearby_npc.get_detail())
+	EventBus.log_info("[You inspect] %s" % _nearby_npc.get_status_short())
 
 func get_status() -> String:
-	var inv := "Food:%d  Gold:%d  Wood:%d  Herb:%d" % [
-		inventory.food, inventory.gold, inventory.wood, inventory.herb
-	]
-	if _nearby_entity and _nearby_entity.has_method("get_status_short"):
-		inv += "\n[E] " + _nearby_entity.get_status_short()
-	return inv
+	if _nearby_npc and is_instance_valid(_nearby_npc):
+		return "Near: %s\n[E] inspect" % _nearby_npc.get_status_short()
+	return "Wandering the plains town...\nWalk up to someone and press E."

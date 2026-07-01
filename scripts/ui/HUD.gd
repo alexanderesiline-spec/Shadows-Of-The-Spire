@@ -13,12 +13,11 @@ var _status_panel: PanelContainer
 var _status_content: VBoxContainer
 var _status_visible: bool = false
 
+var _inspector: Label
+
 func _ready() -> void:
 	_build_ui()
 	EventBus.world_event.connect(_on_world_event)
-	EventBus.village_crisis.connect(func(v, c): _add_log("[!] %s crisis in %s" % [c, v], COLOR_DANGER))
-	EventBus.faction_grew.connect(func(f, p): _add_log("[+] %s now %d strong" % [f, p], COLOR_WARNING))
-	EventBus.livestock_attacked.connect(func(v, n): _add_log("[~] %s lost %d livestock" % [v, n], COLOR_WARNING))
 
 func _build_ui() -> void:
 	var root := Control.new()
@@ -57,6 +56,29 @@ func _build_ui() -> void:
 	_player_stats.add_theme_font_size_override("font_size", 11)
 	pvbox.add_child(_player_stats)
 
+	# ── NPC inspector (right side, below player) ───────────────────────────
+	var insp_bg := PanelContainer.new()
+	insp_bg.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	insp_bg.offset_left = -310
+	insp_bg.offset_top = 74
+	insp_bg.offset_bottom = 190
+	root.add_child(insp_bg)
+
+	var ivbox := VBoxContainer.new()
+	insp_bg.add_child(ivbox)
+
+	var insp_title := Label.new()
+	insp_title.text = "— Inspector —"
+	insp_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	insp_title.add_theme_font_size_override("font_size", 12)
+	ivbox.add_child(insp_title)
+
+	_inspector = Label.new()
+	_inspector.add_theme_font_size_override("font_size", 11)
+	_inspector.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_inspector.custom_minimum_size = Vector2(300, 0)
+	ivbox.add_child(_inspector)
+
 	# ── Event log (bottom-left) ────────────────────────────────────────────
 	var log_bg := PanelContainer.new()
 	log_bg.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
@@ -91,7 +113,7 @@ func _build_ui() -> void:
 	root.add_child(hint_bg)
 
 	var hint := Label.new()
-	hint.text = "WASD / Arrows — Move\nE — Inspect nearby\nTab — World status"
+	hint.text = "WASD / Arrows — Move\nE — Inspect nearby\nTab — Town roster\n+ / − — Time speed"
 	hint.add_theme_font_size_override("font_size", 11)
 	hint_bg.add_child(hint)
 
@@ -130,31 +152,43 @@ func _unhandled_input(event: InputEvent) -> void:
 		_status_panel.visible = _status_visible
 		if _status_visible:
 			_refresh_status_panel()
+	# Debug time controls: speed the world up / slow it down to watch days pass.
+	elif event is InputEventKey and event.pressed and not event.echo:
+		if event.keycode == KEY_EQUAL or event.keycode == KEY_KP_ADD:
+			GameClock.SECONDS_PER_HOUR = maxf(0.1, GameClock.SECONDS_PER_HOUR * 0.5)
+			EventBus.log_info("Time speed: %.1fx" % (1.0 / GameClock.SECONDS_PER_HOUR))
+		elif event.keycode == KEY_MINUS or event.keycode == KEY_KP_SUBTRACT:
+			GameClock.SECONDS_PER_HOUR = minf(8.0, GameClock.SECONDS_PER_HOUR * 2.0)
+			EventBus.log_info("Time speed: %.1fx" % (1.0 / GameClock.SECONDS_PER_HOUR))
 
 func _process(_delta: float) -> void:
 	_time_label.text = GameClock.get_time_string()
 	var player := get_tree().get_first_node_in_group("player")
 	if player:
 		_player_stats.text = player.get_status()
+		var npc: Node = player.get_nearby_npc()
+		if npc and is_instance_valid(npc):
+			_inspector.text = npc.get_detail()
+		else:
+			_inspector.text = "(no one nearby)"
 
 func _refresh_status_panel() -> void:
 	for child in _status_content.get_children():
 		child.queue_free()
 
-	_add_status_section("VILLAGES")
-	for v in WorldSimulation.villages:
-		if is_instance_valid(v):
-			_add_status_line(v.get_status_short(), Color(0.5, 1.0, 0.5))
+	_add_status_section("TOWN — patrol level %.1f" % WorldSimulation.patrol_level)
+	# Townsfolk (non-bandits) and bandits, so the "who's raiding vs lying low"
+	# split is easy to read at a glance.
+	var color_town := Color(0.7, 0.9, 0.7)
+	var color_bandit := Color(1.0, 0.5, 0.45)
+	for n in WorldSimulation.npcs:
+		if is_instance_valid(n) and n.occupation != n.Occupation.BANDIT:
+			_add_status_line(n.get_status_short(), color_town)
 
-	_add_status_section("FACTIONS")
-	for f in WorldSimulation.factions:
-		if is_instance_valid(f):
-			_add_status_line(f.get_status_short(), Color(1.0, 0.55, 0.3))
-
-	_add_status_section("DRAGONS")
-	for d in WorldSimulation.dragons:
-		if is_instance_valid(d):
-			_add_status_line(d.get_status_short(), Color(0.8, 0.5, 1.0))
+	_add_status_section("BANDITS")
+	for n in WorldSimulation.npcs:
+		if is_instance_valid(n) and n.occupation == n.Occupation.BANDIT:
+			_add_status_line(n.get_status_short(), color_bandit)
 
 func _add_status_section(title: String) -> void:
 	var l := Label.new()

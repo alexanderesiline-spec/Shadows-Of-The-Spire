@@ -6,7 +6,7 @@ config_version=5
 [application]
 
 config/name="Shadows of the Spire"
-config/description="A living world where bandits raid when starving, dragons hunt when hungry, and every event emerges from simulation — not script."
+config/description="A living world of autonomous NPCs — farmers rise at dawn, drunks sleep in, and bandits lie low when the guards are out. Every behaviour emerges from needs and personality, not script."
 run/main_scene="res://scenes/Main.tscn"
 config/features=PackedStringArray("4.3", "GL Compatibility")
 config/icon="res://icon.svg"
