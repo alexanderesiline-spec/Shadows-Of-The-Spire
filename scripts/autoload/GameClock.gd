@@ -49,6 +49,12 @@ func get_season() -> String:
 func is_night() -> bool:
 	return hour < 6 or hour >= 20
 
+# Smooth 0..1 position through the day (0 = midnight), including the fractional
+# progress within the current hour. Used by the day/night visual tint.
+func time_fraction() -> float:
+	var frac: float = clampf(_elapsed / SECONDS_PER_HOUR, 0.0, 1.0)
+	return (float(hour) + frac) / float(HOURS_PER_DAY)
+
 # Coarse phase used by NPC schedules — readable buckets instead of raw hours.
 func get_day_phase() -> String:
 	if hour >= 5 and hour < 8:

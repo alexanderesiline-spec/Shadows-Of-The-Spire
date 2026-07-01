@@ -17,10 +17,13 @@ enum Occupation { FARMER, GUARD, MERCHANT, TAVERNKEEP, BANDIT, LABORER, IDLER }
 @export var species: String = "human"
 @export var traits: Array = []
 
-# Needs — hunger/energy/fear on 0..100, wealth/food are counts.
+# Needs — hunger/energy/fear/social on 0..100, wealth/food are counts.
+# social is a satisfaction meter (high = content): it drifts down over time and
+# is topped up by socializing. Low social = lonely = wants company.
 var hunger: float = 30.0
 var energy: float = 80.0
 var fear: float = 0.0
+var social: float = 70.0
 var wealth: float = 10.0
 var food: float = 5.0
 
@@ -37,7 +40,8 @@ var _has_target: bool = false
 var _prev_action: String = "idling"
 var _slept_in_logged: bool = false
 var _hungry_logged: bool = false
-var _raid_cooldown: int = 0   # after a raid a bandit lies low for a while
+var _raid_cooldown: int = 0     # after a raid a bandit lies low for a while
+var _pilfer_cooldown: int = 0   # after a petty theft a thief keeps their head down
 
 const SPEED: float = 140.0
 const ARRIVE_RADIUS: float = 26.0
@@ -119,6 +123,15 @@ func is_asleep() -> bool:
 func has_trait(t: String) -> bool:
 	return traits.has(t)
 
+# When does this NPC prefer to rest? Normally night; nocturnal folk flip it and
+# sleep through the day instead.
+func _rest_time() -> bool:
+	return (not GameClock.is_night()) if has_trait("nocturnal") else GameClock.is_night()
+
+# Hardy NPCs tire more slowly — route work/travel energy drains through this.
+func _energy_cost(x: float) -> float:
+	return x * (0.6 if has_trait("hardy") else 1.0)
+
 # ── The hourly brain ─────────────────────────────────────────────────────────
 
 func simulate_hour(_hour: int) -> void:
@@ -134,14 +147,18 @@ func simulate_day(_day: int, _season: String) -> void:
 func _apply_hourly_effects() -> void:
 	if _raid_cooldown > 0:
 		_raid_cooldown -= 1
-	# Base metabolism.
-	hunger = clampf(hunger + 3.0, 0.0, 100.0)
+	if _pilfer_cooldown > 0:
+		_pilfer_cooldown -= 1
+	# Base metabolism. Gluttons burn through food faster.
+	hunger = clampf(hunger + (5.0 if has_trait("glutton") else 3.0), 0.0, 100.0)
 	if current_action != "sleeping":
-		energy = clampf(energy - 2.0, 0.0, 100.0)
+		energy = clampf(energy - _energy_cost(2.0), 0.0, 100.0)
+	# Company fades over time; loners feel it more slowly.
+	social = clampf(social - (0.9 if has_trait("loner") else 1.5), 0.0, 100.0)
 
 	# Still walking to the destination — no place effect yet, just leg-tax.
 	if not _arrived():
-		energy = clampf(energy - 1.0, 0.0, 100.0)
+		energy = clampf(energy - _energy_cost(1.0), 0.0, 100.0)
 		return
 
 	match current_action:
@@ -157,15 +174,23 @@ func _apply_hourly_effects() -> void:
 		"farming":
 			food += 3.0
 			wealth += 1.0
-			energy = clampf(energy - 4.0, 0.0, 100.0)
+			energy = clampf(energy - _energy_cost(4.0), 0.0, 100.0)
 			hunger = clampf(hunger + 1.0, 0.0, 100.0)
 		"guarding":
 			wealth += 2.0
-			energy = clampf(energy - 3.0, 0.0, 100.0)
+			energy = clampf(energy - _energy_cost(3.0), 0.0, 100.0)
 			hunger = clampf(hunger + 1.0, 0.0, 100.0)
 		"trading":
 			wealth += 3.0
-			energy = clampf(energy - 2.0, 0.0, 100.0)
+			energy = clampf(energy - _energy_cost(2.0), 0.0, 100.0)
+		"socializing":
+			social = clampf(social + 22.0, 0.0, 100.0)
+			energy = clampf(energy - _energy_cost(1.0), 0.0, 100.0)
+		"praying":
+			fear = clampf(fear - 30.0, 0.0, 100.0)
+			social = clampf(social + 4.0, 0.0, 100.0)
+		"pilfering":
+			_do_pilfer()
 		"buying":
 			if wealth >= FOOD_COST and food < FOOD_BUY_CAP:
 				wealth -= FOOD_COST
@@ -217,11 +242,11 @@ func _score_actions() -> Dictionary:
 	var phase := GameClock.get_day_phase()
 	var night := GameClock.is_night()
 
-	# SLEEP — everyone can.
+	# SLEEP — everyone can. Rest time is night, or daytime for the nocturnal.
 	var sleep := (100.0 - energy) * 0.9
-	if night:
+	if _rest_time():
 		sleep += 45.0
-	elif phase == "Dusk":
+	elif phase == "Dusk" and not has_trait("nocturnal"):
 		sleep += 10.0
 	if _hungover and (phase == "Dawn" or phase == "Morning"):
 		sleep += 65.0                       # the drunkard sleeps in
@@ -233,9 +258,9 @@ func _score_actions() -> Dictionary:
 		sleep -= 35.0                       # too hungry to rest
 	s["sleeping"] = sleep
 
-	# EAT — in place, only if food on hand.
+	# EAT — in place, only if food on hand. Gluttons reach for it sooner.
 	if food > 0:
-		s["eating"] = hunger * 1.2
+		s["eating"] = hunger * (1.5 if has_trait("glutton") else 1.2)
 
 	# FLEE — if a raid is happening nearby and you're not the type to stand.
 	var danger := WorldSimulation.danger_near(global_position)
@@ -245,6 +270,8 @@ func _score_actions() -> Dictionary:
 			fl += 30.0
 		if has_trait("brave"):
 			fl -= 30.0
+		if has_trait("hardy"):
+			fl -= 25.0
 		s["fleeing"] = fl
 
 	# Occupation-specific productive actions.
@@ -262,20 +289,53 @@ func _score_actions() -> Dictionary:
 		Occupation.IDLER:
 			pass
 
-	# BUY FOOD — anyone who doesn't grow their own.
+	# BUY FOOD — anyone who doesn't grow their own. Misers hold out until hungry.
 	if occupation != Occupation.FARMER and occupation != Occupation.LABORER \
 			and occupation != Occupation.BANDIT:
-		if food < 3.0 and wealth >= FOOD_COST:
+		if food < 3.0 and wealth >= FOOD_COST and (not has_trait("miser") or hunger > 50.0):
 			s["buying"] = 30.0 + hunger * 0.3
 
-	# DRINK — evenings, if you can afford it; drunkards can't resist.
+	# DRINK — evenings, if you can afford it; drunkards can't resist, misers won't.
 	if (phase == "Dusk" or GameClock.hour >= 18) and wealth >= DRINK_COST and energy > 15.0:
 		var drink := 18.0
 		if has_trait("drunkard"):
 			drink += 55.0
+		if has_trait("glutton"):
+			drink += 20.0
+		if has_trait("miser"):
+			drink -= 60.0
 		if occupation == Occupation.BANDIT:
 			drink -= 40.0
 		s["drinking"] = drink
+
+	# SOCIALIZE — seek company when the social meter dips (gregarious most of all).
+	if not has_trait("loner"):
+		var lonely := 100.0 - social
+		var soc := lonely * (0.9 if has_trait("gregarious") else 0.45)
+		if has_trait("gregarious"):
+			soc += 15.0
+		if _rest_time():
+			soc -= 40.0                          # not while it's bedtime
+		s["socializing"] = soc
+
+	# PRAY — the devout visit the shrine, especially at Dawn/Dusk or when afraid.
+	if has_trait("devout"):
+		var pray := 12.0 + fear * 0.6
+		if phase == "Dawn" or phase == "Dusk":
+			pray += 25.0
+		if _rest_time():
+			pray -= 40.0
+		s["praying"] = pray
+	elif fear > 55.0 and WorldSimulation.get_nearest_place(global_position, Place.PlaceType.SHRINE) != null:
+		s["praying"] = fear * 0.4                 # even the unfaithful seek comfort when terrified
+
+	# PILFER — a thief lifts a purse when guards are scarce and prey is near.
+	if has_trait("thief") and occupation != Occupation.BANDIT and _pilfer_cooldown == 0:
+		var guards := WorldSimulation.count_guards_near(global_position, 260.0)
+		var pilf := (18.0 + maxf(0.0, 30.0 - wealth)) / (1.0 + guards * 1.6)
+		if GameClock.is_night():
+			pilf += 8.0
+		s["pilfering"] = pilf
 
 	# IDLE — always available fallback.
 	s["idling"] = 5.0
@@ -285,12 +345,16 @@ func _work_score(phase: String, night: bool, needs_food: bool, is_guard: bool = 
 	if energy < 18.0 or hunger > 88.0:
 		return -10.0                        # too spent or too hungry to work
 	var w := 40.0
-	if phase == "Morning" or phase == "Day":
-		w += 25.0
-	if night:
-		w -= 30.0
-		if is_guard:
-			w += 20.0                        # some guards do keep the night watch
+	if has_trait("nocturnal"):
+		# Productive under the stars, sluggish in daylight.
+		w += (25.0 if night else -30.0)
+	else:
+		if phase == "Morning" or phase == "Day":
+			w += 25.0
+		if night:
+			w -= 30.0
+			if is_guard:
+				w += 20.0                    # some guards do keep the night watch
 	if has_trait("diligent"):
 		w += 15.0
 	if has_trait("lazy"):
@@ -331,6 +395,16 @@ func _resolve_target(action: String) -> void:
 			_set_target_place(WorldSimulation.get_nearest_place(global_position, Place.PlaceType.MARKET))
 		"drinking":
 			_set_target_place(WorldSimulation.get_nearest_place(global_position, Place.PlaceType.TAVERN))
+		"socializing":
+			# Gather where people are: the market by day, the tavern by evening.
+			var spot := WorldSimulation.get_nearest_place(global_position, Place.PlaceType.MARKET)
+			if GameClock.get_day_phase() == "Dusk" or GameClock.hour >= 18:
+				spot = WorldSimulation.get_nearest_place(global_position, Place.PlaceType.TAVERN)
+			_set_target_place(spot)
+		"praying":
+			_set_target_place(WorldSimulation.get_nearest_place(global_position, Place.PlaceType.SHRINE))
+		"pilfering":
+			_set_target_place(WorldSimulation.get_nearest_place(global_position, Place.PlaceType.MARKET))
 		"raiding":
 			var mkt := WorldSimulation.get_nearest_place(global_position, Place.PlaceType.MARKET)
 			if mkt:
@@ -375,6 +449,19 @@ func _do_raid() -> void:
 		npc_name, (victim.npc_name if victim else "a stall"), int(loot_w)
 	], 2)
 
+func _do_pilfer() -> void:
+	# Quieter than a raid: lift a couple coin from someone close, then lie low.
+	var victim := _nearest_victim(120.0)
+	var loot := 0.0
+	if victim != null:
+		loot = minf(victim.wealth, 3.0)
+		victim.wealth -= loot
+	wealth += loot
+	_pilfer_cooldown = 14
+	if loot >= 1.0:
+		EventBus.notable(npc_name, "%s quietly lifts %d coin from %s." % [
+			npc_name, int(loot), victim.npc_name], 1)
+
 func _nearest_victim(radius: float) -> Node:
 	var best: Node = null
 	var best_d := radius
@@ -418,6 +505,9 @@ func _announce_transition() -> void:
 		"drinking":
 			if has_trait("drunkard"):
 				EventBus.notable(npc_name, "%s settles in at the tavern for the night." % npc_name, 0)
+		"praying":
+			if has_trait("devout") and fear > 45.0:
+				EventBus.notable(npc_name, "%s hurries to the shrine, shaken." % npc_name, 0)
 
 func _maybe_log_ambient() -> void:
 	var phase := GameClock.get_day_phase()
@@ -444,8 +534,9 @@ func get_status_short() -> String:
 
 func get_detail() -> String:
 	var trait_str := ", ".join(traits) if not traits.is_empty() else "none"
-	return "%s the %s %s [%s]\nDoing: %s\nHunger %d  Energy %d  Coin %d  Food %d%s\nTraits: %s" % [
+	return "%s the %s %s [%s]\nDoing: %s\nHunger %d  Energy %d  Social %d  Fear %d\nCoin %d  Food %d%s\nTraits: %s" % [
 		npc_name, species, occupation_name(), faction_name(),
-		current_action, int(hunger), int(energy), int(wealth), int(food),
+		current_action, int(hunger), int(energy), int(social), int(fear),
+		int(wealth), int(food),
 		("  (hungover)" if _hungover else ""), trait_str
 	]

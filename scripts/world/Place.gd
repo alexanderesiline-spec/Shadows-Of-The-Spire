@@ -4,7 +4,7 @@ extends Node2D
 # Places are dumb: they hold a type, a look, and an effect. All decision-making
 # lives in the NPC. Effects are applied per-hour while an NPC works/rests here.
 
-enum PlaceType { HOME, FIELD, TAVERN, MARKET, GUARD_POST, CAMP }
+enum PlaceType { HOME, FIELD, TAVERN, MARKET, GUARD_POST, CAMP, SHRINE }
 
 @export var place_name: String = "Place"
 @export var place_type: PlaceType = PlaceType.HOME
@@ -16,6 +16,7 @@ const TYPE_COLORS := {
 	PlaceType.MARKET:    Color(0.78, 0.66, 0.28),
 	PlaceType.GUARD_POST:Color(0.35, 0.42, 0.62),
 	PlaceType.CAMP:      Color(0.50, 0.28, 0.18),
+	PlaceType.SHRINE:    Color(0.72, 0.68, 0.40),
 }
 
 const TYPE_LABELS := {
@@ -25,6 +26,7 @@ const TYPE_LABELS := {
 	PlaceType.MARKET: "Market",
 	PlaceType.GUARD_POST: "Guard Post",
 	PlaceType.CAMP: "Camp",
+	PlaceType.SHRINE: "Shrine",
 }
 
 func _ready() -> void:
@@ -71,6 +73,20 @@ func _build_visual() -> void:
 			])
 			tent.color = color
 			add_child(tent)
+		PlaceType.SHRINE:
+			# A standing stone / obelisk with a bright capstone.
+			var pillar := Polygon2D.new()
+			pillar.polygon = PackedVector2Array([
+				Vector2(-9, 14), Vector2(9, 14), Vector2(6, -30), Vector2(-6, -30)
+			])
+			pillar.color = color
+			add_child(pillar)
+			var cap := Polygon2D.new()
+			cap.polygon = PackedVector2Array([
+				Vector2(-8, -30), Vector2(0, -42), Vector2(8, -30)
+			])
+			cap.color = color.lightened(0.4)
+			add_child(cap)
 
 	var label := Label.new()
 	label.text = "%s" % place_name

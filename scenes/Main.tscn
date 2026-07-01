@@ -1,12 +1,16 @@
-[gd_scene load_steps=5 format=3]
+[gd_scene load_steps=6 format=3]
 
 [ext_resource type="Script" path="res://scripts/Main.gd" id="1_main"]
 [ext_resource type="PackedScene" path="res://scenes/WorldMap.tscn" id="2_worldmap"]
 [ext_resource type="PackedScene" path="res://scenes/Player.tscn" id="3_player"]
 [ext_resource type="Script" path="res://scripts/ui/HUD.gd" id="4_hud"]
+[ext_resource type="Script" path="res://scripts/world/DayNight.gd" id="5_daynight"]
 
 [node name="Main" type="Node2D"]
 script = ExtResource("1_main")
+
+[node name="DayNight" type="CanvasModulate" parent="."]
+script = ExtResource("5_daynight")
 
 [node name="WorldMap" parent="." instance=ExtResource("2_worldmap")]
 
