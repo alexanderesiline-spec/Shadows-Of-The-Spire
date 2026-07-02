@@ -32,6 +32,15 @@ var food: float = 5.0
 # wary. Settles gently toward 50 each day so no single event brands them forever.
 var trust_in_player: float = 50.0
 
+# Relationships with OTHER NPCs — lazily seeded on first contact, keyed by the
+# other NPC's instance id. Each entry: {"affinity": float 0-100, "type": String}.
+# `type` is empty unless explicitly assigned (e.g. "spouse") at spawn. This is
+# each NPC's own perception — it isn't mirrored automatically, so one side can
+# hold a grudge the other doesn't.
+var relationships: Dictionary = {}
+var _colocation_cooldowns: Dictionary = {}   # other id -> hours remaining
+var _prev_fear: float = 0.0                  # for detecting sudden fear spikes
+
 # Assigned by the world spawner.
 var home_place: Node = null
 var work_place: Node = null
@@ -60,6 +69,21 @@ const FACTION_COLORS := {
 	Faction.NEUTRAL:    Color(0.70, 0.62, 0.48),
 	Faction.BANDIT:     Color(0.66, 0.24, 0.22),
 }
+
+# Inter-species relationship seeds, straight from the world's lore — grievance
+# pairs start cooler, alliance pairs start warmer. Keyed by species pair sorted
+# alphabetically and joined with "|" so lookup doesn't care about call order.
+const SPECIES_RELATIONS := {
+	"bear-kin|bird-kin": 15.0,   # alliance — shared highland territories
+	"bird-kin|cat-kin": -15.0,   # grievance — old predator/prey tension
+	"bear-kin|wolf-kin": -15.0,  # grievance — territorial competition
+	"cat-kin|wolf-kin": 5.0,     # civil tolerance
+	"demon|elf": -30.0,          # full historical warfare
+}
+const SAME_FACTION_TRUST_BONUS := 10.0
+const FOX_KIN_UNIVERSAL_BONUS := 10.0    # considered lucky by every species
+const LIZARD_KIN_MEDIATOR_BONUS := 5.0   # neutral, trusted by every species
+const DEMON_UNIVERSAL_PENALTY := -15.0   # unliked by every non-demon species
 
 var _name_label: Label
 var _action_label: Label
@@ -165,6 +189,90 @@ func trust_label() -> String:
 	else:
 		return "Hostile"
 
+# ── NPC-to-NPC relationships ──────────────────────────────────────────────────
+
+func _species_pair_key(a: String, b: String) -> String:
+	return (a + "|" + b) if a <= b else (b + "|" + a)
+
+# Where an NPC's opinion of another starts before any history between them —
+# species table + shared faction, straight from the lore's inter-species notes.
+func _seed_affinity(other: Node) -> float:
+	var base := 50.0
+	if faction == other.faction:
+		base += SAME_FACTION_TRUST_BONUS
+	if species != other.species:
+		var key := _species_pair_key(species, other.species)
+		if SPECIES_RELATIONS.has(key):
+			base += SPECIES_RELATIONS[key]
+	if species == "fox-kin" or other.species == "fox-kin":
+		base += FOX_KIN_UNIVERSAL_BONUS
+	if species == "lizard-kin" or other.species == "lizard-kin":
+		base += LIZARD_KIN_MEDIATOR_BONUS
+	if (species == "demon") != (other.species == "demon"):
+		base += DEMON_UNIVERSAL_PENALTY
+	return clampf(base, 0.0, 100.0)
+
+func _relationship_entry(other: Node) -> Dictionary:
+	var id := other.get_instance_id()
+	if not relationships.has(id):
+		relationships[id] = {"affinity": _seed_affinity(other), "type": ""}
+	return relationships[id]
+
+func get_affinity(other: Node) -> float:
+	return _relationship_entry(other)["affinity"]
+
+func adjust_affinity(other: Node, delta: float) -> void:
+	var entry := _relationship_entry(other)
+	entry["affinity"] = clampf(entry["affinity"] + delta, 0.0, 100.0)
+
+func set_affinity(other: Node, value: float) -> void:
+	_relationship_entry(other)["affinity"] = clampf(value, 0.0, 100.0)
+
+# Explicitly tag a discrete bond (spouse, sibling, ...) that overrides the
+# score-derived label regardless of how the number drifts.
+func set_relationship_type(other: Node, type: String) -> void:
+	_relationship_entry(other)["type"] = type
+
+func relationship_label(other: Node) -> String:
+	var entry := _relationship_entry(other)
+	if entry["type"] != "":
+		return String(entry["type"]).capitalize()
+	var affinity: float = entry["affinity"]
+	# Jealous NPCs read the same score less charitably — the Acquaintance/Rival
+	# bands shrink, so marginal relationships tip into Rival or Enemy sooner.
+	var jealous_shift := 10.0 if has_trait("jealous") else 0.0
+	if affinity >= 80.0:
+		return "Close Friend"
+	elif affinity >= 62.0:
+		return "Friend"
+	elif affinity >= 40.0 + jealous_shift:
+		return "Acquaintance"
+	elif affinity >= 22.0 + jealous_shift:
+		return "Rival"
+	else:
+		return "Enemy"
+
+# The strongest positive and most negative relationship this NPC currently
+# has, for the inspector. Only reports relationships already seeded (i.e.
+# they've actually crossed paths) rather than seeding every NPC in the world.
+func closest_relationships() -> Array:
+	var best_friend: Node = null
+	var best_friend_score := -INF
+	var worst_rival: Node = null
+	var worst_rival_score := INF
+	for id in relationships:
+		var n := instance_from_id(id)
+		if n == null or not is_instance_valid(n):
+			continue
+		var aff: float = relationships[id]["affinity"]
+		if aff > best_friend_score:
+			best_friend_score = aff
+			best_friend = n
+		if aff < worst_rival_score:
+			worst_rival_score = aff
+			worst_rival = n
+	return [best_friend, worst_rival]
+
 # When does this NPC prefer to rest? Normally night; nocturnal folk flip it and
 # sleep through the day instead.
 func _rest_time() -> bool:
@@ -177,9 +285,14 @@ func _energy_cost(x: float) -> float:
 # ── The hourly brain ─────────────────────────────────────────────────────────
 
 func simulate_hour(_hour: int) -> void:
+	# Catch a sudden fear spike since last hour (threatened, raided, ...) before
+	# this hour's own effects run, so friends/family can react to it.
+	if fear - _prev_fear >= 15.0:
+		_broadcast_worry()
 	_apply_hourly_effects()
 	_decide()
 	_refresh_label()
+	_prev_fear = fear
 
 func simulate_day(_day: int, _season: String) -> void:
 	# Reset per-day one-shot log guards at the start of each day.
@@ -187,12 +300,19 @@ func simulate_day(_day: int, _season: String) -> void:
 	_hungry_logged = false
 	# Trust settles gently toward neutral — a single event doesn't brand an NPC.
 	trust_in_player = lerpf(trust_in_player, 50.0, 0.08)
+	# Relationships settle too — but the vengeful barely let grudges fade.
+	for id in relationships:
+		var entry: Dictionary = relationships[id]
+		var aff: float = entry["affinity"]
+		var settle_rate := 0.02 if (aff < 50.0 and has_trait("vengeful")) else 0.08
+		entry["affinity"] = lerpf(aff, 50.0, settle_rate)
 
 func _apply_hourly_effects() -> void:
 	if _raid_cooldown > 0:
 		_raid_cooldown -= 1
 	if _pilfer_cooldown > 0:
 		_pilfer_cooldown -= 1
+	_tick_colocation_cooldowns()
 	# Base metabolism. Gluttons burn through food faster.
 	hunger = clampf(hunger + (5.0 if has_trait("glutton") else 3.0), 0.0, 100.0)
 	if current_action != "sleeping":
@@ -230,6 +350,7 @@ func _apply_hourly_effects() -> void:
 		"socializing":
 			social = clampf(social + 22.0, 0.0, 100.0)
 			energy = clampf(energy - _energy_cost(1.0), 0.0, 100.0)
+			_process_colocation()
 		"praying":
 			fear = clampf(fear - 30.0, 0.0, 100.0)
 			social = clampf(social + 4.0, 0.0, 100.0)
@@ -441,11 +562,17 @@ func _resolve_target(action: String) -> void:
 		"drinking":
 			_set_target_place(WorldSimulation.get_nearest_place(global_position, Place.PlaceType.TAVERN))
 		"socializing":
-			# Gather where people are: the market by day, the tavern by evening.
-			var spot := WorldSimulation.get_nearest_place(global_position, Place.PlaceType.MARKET)
-			if GameClock.get_day_phase() == "Dusk" or GameClock.hour >= 18:
-				spot = WorldSimulation.get_nearest_place(global_position, Place.PlaceType.TAVERN)
-			_set_target_place(spot)
+			# Seek out an actual friend first; fall back to "wherever people
+			# gather" only if nobody worth visiting is nearby.
+			var friend := _find_friend_nearby(400.0)
+			if friend != null:
+				_target_pos = friend.global_position
+				_has_target = true
+			else:
+				var spot := WorldSimulation.get_nearest_place(global_position, Place.PlaceType.MARKET)
+				if GameClock.get_day_phase() == "Dusk" or GameClock.hour >= 18:
+					spot = WorldSimulation.get_nearest_place(global_position, Place.PlaceType.TAVERN)
+				_set_target_place(spot)
 		"praying":
 			_set_target_place(WorldSimulation.get_nearest_place(global_position, Place.PlaceType.SHRINE))
 		"pilfering":
@@ -464,6 +591,21 @@ func _resolve_target(action: String) -> void:
 			_has_target = true
 		_:  # eating, idling → stay put
 			_has_target = false
+
+func _find_friend_nearby(radius: float) -> Node:
+	var best: Node = null
+	var best_affinity := 65.0   # only counts as "worth seeking out" above this
+	for n in WorldSimulation.npcs:
+		if not is_instance_valid(n) or n == self:
+			continue
+		var d: float = global_position.distance_to(n.global_position)
+		if d > radius:
+			continue
+		var aff := get_affinity(n)
+		if aff > best_affinity:
+			best_affinity = aff
+			best = n
+	return best
 
 func _set_target_place(p: Node) -> void:
 	if p != null and is_instance_valid(p):
@@ -506,6 +648,75 @@ func _do_pilfer() -> void:
 	if loot >= 1.0:
 		EventBus.notable(npc_name, "%s quietly lifts %d coin from %s." % [
 			npc_name, int(loot), victim.npc_name], 1)
+
+# A sudden spike in this NPC's fear (threatened, raided, ...) is noticed by
+# nearby friends and family, who grow afraid on their behalf — scaled by how
+# much they care. Rivals and strangers don't react at all.
+func _broadcast_worry() -> void:
+	var loudest_friend: Node = null
+	var loudest_worry := 0.0
+	for n in WorldSimulation.npcs:
+		if not is_instance_valid(n) or n == self:
+			continue
+		if global_position.distance_to(n.global_position) > 260.0:
+			continue
+		var aff := n.get_affinity(self)
+		if aff < 62.0:                       # only Friend-or-better worries
+			continue
+		var worry := (aff - 50.0) / 50.0 * 25.0
+		if n.has_trait("loyal"):
+			worry *= 1.6
+		n.fear = clampf(n.fear + worry, 0.0, 100.0)
+		if worry > loudest_worry:
+			loudest_worry = worry
+			loudest_friend = n
+	if loudest_friend != null:
+		EventBus.notable(loudest_friend.npc_name, "%s notices %s is in danger and grows afraid." % [
+			loudest_friend.npc_name, npc_name], 1)
+
+# When two NPCs both end up socializing near each other, their relationship
+# drifts — warmer for a normal pair, cooler (friction) for a lore-grievance
+# species pair. Only the lower-instance-id side applies the mutual update so a
+# colocated pair isn't double-counted (both sides tick "socializing" this hour).
+func _process_colocation() -> void:
+	for n in WorldSimulation.npcs:
+		if not is_instance_valid(n) or n == self:
+			continue
+		if n.current_action != "socializing":
+			continue
+		if global_position.distance_to(n.global_position) > ARRIVE_RADIUS * 2.0:
+			continue
+		if get_instance_id() > n.get_instance_id():
+			continue
+		var id := n.get_instance_id()
+		if _colocation_cooldowns.has(id):
+			continue
+		_colocation_cooldowns[id] = 6   # hours before this pair can drift again
+
+		var key := _species_pair_key(species, n.species)
+		var is_friction: bool = species != n.species and SPECIES_RELATIONS.get(key, 0.0) < 0.0
+		if is_friction:
+			var self_friction := -3.0 * (2.0 if has_trait("jealous") else 1.0)
+			var other_friction := -3.0 * (2.0 if n.has_trait("jealous") else 1.0)
+			adjust_affinity(n, self_friction)
+			n.adjust_affinity(self, other_friction)
+			EventBus.notable(npc_name, "Curt words pass between %s and %s." % [npc_name, n.npc_name], 0)
+		else:
+			var base_gain := 2.0
+			# Charisma is about how fast OTHERS warm to you, not the reverse.
+			var gain_toward_self := base_gain * (1.5 if has_trait("charismatic") else 1.0)
+			var gain_toward_other := base_gain * (1.5 if n.has_trait("charismatic") else 1.0)
+			n.adjust_affinity(self, gain_toward_self)
+			adjust_affinity(n, gain_toward_other)
+
+func _tick_colocation_cooldowns() -> void:
+	var expired: Array = []
+	for id in _colocation_cooldowns:
+		_colocation_cooldowns[id] -= 1
+		if _colocation_cooldowns[id] <= 0:
+			expired.append(id)
+	for id in expired:
+		_colocation_cooldowns.erase(id)
 
 func _nearest_victim(radius: float) -> Node:
 	var best: Node = null
@@ -602,9 +813,16 @@ func get_status_short() -> String:
 
 func get_detail() -> String:
 	var trait_str := ", ".join(traits) if not traits.is_empty() else "none"
-	return "%s the %s %s [%s]\nDoing: %s\nHunger %d  Energy %d  Social %d  Fear %d\nCoin %d  Food %d%s\nTrust in you: %d (%s)\nTraits: %s" % [
+	var rel := closest_relationships()
+	var rel_str := "hasn't met anyone yet"
+	if rel[0] != null:
+		rel_str = "%s (%s)" % [rel[0].npc_name, relationship_label(rel[0])]
+		if rel[1] != null and rel[1] != rel[0]:
+			rel_str += "  |  Coolest: %s (%s)" % [rel[1].npc_name, relationship_label(rel[1])]
+	return "%s the %s %s [%s]\nDoing: %s\nHunger %d  Energy %d  Social %d  Fear %d\nCoin %d  Food %d%s\nTrust in you: %d (%s)\nClosest: %s\nTraits: %s" % [
 		npc_name, species, occupation_name(), faction_name(),
 		current_action, int(hunger), int(energy), int(social), int(fear),
 		int(wealth), int(food),
-		("  (hungover)" if _hungover else ""), int(trust_in_player), trust_label(), trait_str
+		("  (hungover)" if _hungover else ""), int(trust_in_player), trust_label(),
+		rel_str, trait_str
 	]

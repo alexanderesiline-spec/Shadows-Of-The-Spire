@@ -118,7 +118,7 @@ func _threaten() -> void:
 	n.adjust_trust(-THREATEN_TRUST_LOSS)
 	n.fear = clampf(n.fear + THREATEN_FEAR_GAIN, 0.0, 100.0)
 	EventBus.notable(n.npc_name, "You threaten %s. They recoil in fear." % n.npc_name, 2)
-	WorldSimulation.gossip_near(n.global_position, -8.0, THREATEN_GOSSIP_RADIUS, n)
+	WorldSimulation.gossip_near(n.global_position, -8.0, THREATEN_GOSSIP_RADIUS, n, n)
 
 func _tick_greet_cooldowns() -> void:
 	var expired: Array = []

@@ -51,22 +51,36 @@ func _spawn_town() -> void:
 	for hp in [Vector2(500, 470), Vector2(560, 510), Vector2(700, 470),
 			   Vector2(760, 420), Vector2(720, 540), Vector2(470, 300),
 			   Vector2(440, 540), Vector2(660, 500), Vector2(520, 560),
-			   Vector2(740, 300), Vector2(430, 410), Vector2(620, 560)]:
+			   Vector2(740, 300), Vector2(430, 410), Vector2(620, 560),
+			   Vector2(590, 440), Vector2(680, 540), Vector2(490, 350),
+			   Vector2(770, 380)]:
 		homes.append(_place("Home", Place.PlaceType.HOME, hp))
 
 	# ── Farmers ───────────────────────────────────────────────────────────────
-	_npc("Doran",  NPC_.Faction.NEUTRAL, NPC_.Occupation.FARMER, "human",
+	var doran := _npc("Doran",  NPC_.Faction.NEUTRAL, NPC_.Occupation.FARMER, "human",
 		["diligent"], homes[0], field_a)                       # up at dawn
 	_npc("Wenna",  NPC_.Faction.NEUTRAL, NPC_.Occupation.FARMER, "human",
 		["diligent", "glutton"], homes[1], field_b)            # works hard, eats more
-	_npc("Sella",  NPC_.Faction.NEUTRAL, NPC_.Occupation.FARMER, "human",
+	var sella := _npc("Sella",  NPC_.Faction.NEUTRAL, NPC_.Occupation.FARMER, "human",
 		["gregarious"], homes[2], field_a)                     # loves company
 	_npc("Aldous", NPC_.Faction.NEUTRAL, NPC_.Occupation.FARMER, "human",
 		["devout"], homes[3], field_b)                         # prays at the shrine
+	# Doran and Sella are established as a couple — a discrete bond that shows
+	# up regardless of how their numeric affinity happens to drift.
+	_bond(doran, sella, "spouse", 88.0)
 
-	# A demi-human laborer — tireless in the fields (lore texture).
+	# Demi-humans — the species table below seeds how they read each other on
+	# sight, straight from the world's inter-species history.
 	_npc("Rukh",   NPC_.Faction.NEUTRAL, NPC_.Occupation.LABORER, "wolf-kin",
-		["diligent", "hardy"], homes[4], field_b)
+		["diligent", "hardy"], homes[4], field_b)              # tireless in the fields
+	_npc("Brenna", NPC_.Faction.NEUTRAL, NPC_.Occupation.GUARD, "bear-kin",
+		["brave"], homes[12], guard_post)                      # slow to anger, devastating when not
+	_npc("Skyla",  NPC_.Faction.NEUTRAL, NPC_.Occupation.MERCHANT, "bird-kin",
+		["gregarious"], homes[13], market)                     # well-traveled trader
+	_npc("Vess",   NPC_.Faction.NEUTRAL, NPC_.Occupation.IDLER, "cat-kin",
+		["loner"], homes[14], null)                            # solitary by nature
+	_npc("Renna",  NPC_.Faction.NEUTRAL, NPC_.Occupation.MERCHANT, "fox-kin",
+		["charismatic"], homes[15], market)                    # everyone's a little fond of her
 
 	# ── Imperial guards — day watch and night watch keep bandits honest. ──────
 	_npc("Sgt. Balen", NPC_.Faction.EMPIRE, NPC_.Occupation.GUARD, "human",
@@ -97,6 +111,14 @@ func _spawn_town() -> void:
 		["greedy", "hardy"], camp, null)
 	_npc("Skael", NPC_.Faction.BANDIT, NPC_.Occupation.BANDIT, "human",
 		["nocturnal"], camp, null)                             # night raider
+
+# Explicitly tag a discrete relationship (spouse, sibling, ...) between two
+# NPCs, overriding the score-derived label regardless of how the number drifts.
+func _bond(a: Node, b: Node, type: String, affinity: float) -> void:
+	a.set_relationship_type(b, type)
+	b.set_relationship_type(a, type)
+	a.set_affinity(b, affinity)
+	b.set_affinity(a, affinity)
 
 func _place(pname: String, type: int, pos: Vector2) -> Node:
 	var p: Node = PlaceScene.instantiate()
