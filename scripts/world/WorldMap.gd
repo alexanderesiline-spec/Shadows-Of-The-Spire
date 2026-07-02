@@ -125,6 +125,14 @@ func _npc(pname: String, fac: int, occ: int, species: String, traits: Array,
 	n.social = randf_range(45.0, 85.0)
 	n.wealth = randf_range(6.0, 18.0)
 	n.food = randf_range(2.0, 6.0)
+	# Faction sets a baseline for how much this NPC trusts a stranger on sight.
+	match occ:
+		NPC_.Occupation.BANDIT:
+			n.trust_in_player = randf_range(25.0, 40.0)    # wary of everyone
+		NPC_.Occupation.GUARD:
+			n.trust_in_player = randf_range(50.0, 60.0)    # neutral-official
+		_:
+			n.trust_in_player = randf_range(45.0, 55.0)    # ordinary townsfolk
 	add_child(n)
 	# home_place/work_place are set after add_child so refs are valid.
 	n.home_place = home

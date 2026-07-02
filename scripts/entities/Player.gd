@@ -1,17 +1,31 @@
 extends CharacterBody2D
 
-# A free-roaming observer/participant. In this build the player mostly wanders
-# and inspects — the world runs with or without them. Faction alignment and
-# real interaction come in a later phase.
+# A free-roaming observer/participant. The world runs with or without them, but
+# the player can now nudge it: greeting builds trust, threatening breaks it.
+# Faction alignment and real combat/economy come in a later phase.
 
 const SPEED: float = 170.0
 const INTERACT_RADIUS: float = 90.0
+const GREET_TRUST_GAIN: float = 1.0
+const GREET_COOLDOWN_HOURS: int = 3       # stops trust-farming by spamming E
+const THREATEN_TRUST_LOSS: float = 25.0
+const THREATEN_FEAR_GAIN: float = 35.0
+const THREATEN_GOSSIP_RADIUS: float = 220.0
+
+# Mana — the resource, not spells yet. Untrained average mage: 100 pool (lore).
+var mana: float = 100.0
+var max_mana: float = 100.0
+const MANA_RESTORE_RESTING: float = 100.0 / 2.5   # full in ~2.5h stationary
+const MANA_RESTORE_WALKING: float = 100.0 / 4.5   # full in ~4.5h while moving
 
 var _nearby_npc: Node = null
+var _moved_this_hour: bool = false
+var _greet_cooldowns: Dictionary = {}   # NPC instance id -> hours remaining
 
 func _ready() -> void:
 	add_to_group("player")
 	_build_visual()
+	GameClock.hour_passed.connect(_on_hour_passed)
 
 func _build_visual() -> void:
 	var body := Polygon2D.new()
@@ -41,14 +55,19 @@ func _physics_process(_delta: float) -> void:
 		Input.get_axis("ui_left", "ui_right"),
 		Input.get_axis("ui_up", "ui_down")
 	)
-	velocity = dir.normalized() * SPEED if dir != Vector2.ZERO \
-			   else velocity.move_toward(Vector2.ZERO, SPEED * 8.0)
+	if dir != Vector2.ZERO:
+		velocity = dir.normalized() * SPEED
+		_moved_this_hour = true
+	else:
+		velocity = velocity.move_toward(Vector2.ZERO, SPEED * 8.0)
 	move_and_slide()
 	_update_nearby()
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("interact") and _nearby_npc != null:
-		_interact()
+		_greet()
+	elif event.is_action_pressed("threaten") and _nearby_npc != null:
+		_threaten()
 
 func _update_nearby() -> void:
 	_nearby_npc = null
@@ -63,13 +82,59 @@ func _update_nearby() -> void:
 func get_nearby_npc() -> Node:
 	return _nearby_npc
 
-func _interact() -> void:
-	if _nearby_npc == null:
-		return
-	EventBus.player_interacted.emit(_nearby_npc.npc_name, _nearby_npc.get_detail())
-	EventBus.log_info("[You inspect] %s" % _nearby_npc.get_status_short())
+# ── Mana restoration ─────────────────────────────────────────────────────────
+# Ticks once per in-game hour (mirrors how NPC needs regen) rather than per
+# frame, keyed on whether the player stood still or walked during that hour.
+# Lore's "no restoration in combat/running" tier has no hook yet — there's no
+# combat or sprint in this build — so only the two active tiers apply so far.
+
+func _on_hour_passed(_hour: int) -> void:
+	var rate := MANA_RESTORE_WALKING if _moved_this_hour else MANA_RESTORE_RESTING
+	mana = clampf(mana + rate, 0.0, max_mana)
+	_moved_this_hour = false
+	_tick_greet_cooldowns()
+
+func get_mana_status() -> String:
+	return "Mana %d / %d" % [int(mana), int(max_mana)]
+
+# ── Greet & Threaten — the player's two levers on NPC trust ─────────────────
+
+func _greet() -> void:
+	var n := _nearby_npc
+	EventBus.player_interacted.emit(n.npc_name, n.get_detail())
+	EventBus.log_info("[You inspect] %s" % n.get_status_short())
+
+	var response: String = n.trade_response()
+	if response != "":
+		EventBus.log_info(response)
+
+	var id := n.get_instance_id()
+	if not _greet_cooldowns.has(id):
+		n.adjust_trust(GREET_TRUST_GAIN)
+		_greet_cooldowns[id] = GREET_COOLDOWN_HOURS
+
+func _threaten() -> void:
+	var n := _nearby_npc
+	n.adjust_trust(-THREATEN_TRUST_LOSS)
+	n.fear = clampf(n.fear + THREATEN_FEAR_GAIN, 0.0, 100.0)
+	EventBus.notable(n.npc_name, "You threaten %s. They recoil in fear." % n.npc_name, 2)
+	WorldSimulation.gossip_near(n.global_position, -8.0, THREATEN_GOSSIP_RADIUS, n)
+
+func _tick_greet_cooldowns() -> void:
+	var expired: Array = []
+	for id in _greet_cooldowns:
+		_greet_cooldowns[id] -= 1
+		if _greet_cooldowns[id] <= 0:
+			expired.append(id)
+	for id in expired:
+		_greet_cooldowns.erase(id)
+
+# ── Inspection (HUD) ─────────────────────────────────────────────────────────
 
 func get_status() -> String:
+	var s := get_mana_status()
 	if _nearby_npc and is_instance_valid(_nearby_npc):
-		return "Near: %s\n[E] inspect" % _nearby_npc.get_status_short()
-	return "Wandering the plains town...\nWalk up to someone and press E."
+		s += "\nNear: %s\n[E] greet   [R] threaten" % _nearby_npc.get_status_short()
+	else:
+		s += "\nWandering the plains town...\nWalk up to someone and press E."
+	return s

@@ -113,7 +113,7 @@ func _build_ui() -> void:
 	root.add_child(hint_bg)
 
 	var hint := Label.new()
-	hint.text = "WASD / Arrows — Move\nE — Inspect nearby\nTab — Town roster\n+ / − — Time speed"
+	hint.text = "WASD / Arrows — Move\nE — Greet   R — Threaten\nTab — Town roster\n+ / − — Time speed"
 	hint.add_theme_font_size_override("font_size", 11)
 	hint_bg.add_child(hint)
 

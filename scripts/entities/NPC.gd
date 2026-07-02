@@ -27,6 +27,11 @@ var social: float = 70.0
 var wealth: float = 10.0
 var food: float = 5.0
 
+# Trust in the player specifically (0-100, 50 = neutral). Per-NPC, not a global
+# reputation number — the tavernkeep can adore the player while a guard stays
+# wary. Settles gently toward 50 each day so no single event brands them forever.
+var trust_in_player: float = 50.0
+
 # Assigned by the world spawner.
 var home_place: Node = null
 var work_place: Node = null
@@ -123,6 +128,43 @@ func is_asleep() -> bool:
 func has_trait(t: String) -> bool:
 	return traits.has(t)
 
+func adjust_trust(delta: float) -> void:
+	trust_in_player = clampf(trust_in_player + delta, 0.0, 100.0)
+
+# How this NPC reacts to the player's business, given the trust between them.
+# No player economy exists yet, so this is expressed as flavor/log outcome
+# rather than an actual refused transaction — the lever is real, the till isn't.
+func trade_response() -> String:
+	match occupation:
+		Occupation.MERCHANT, Occupation.TAVERNKEEP:
+			if trust_in_player < 30.0:
+				return "%s refuses to deal with you." % npc_name
+			elif trust_in_player < 55.0:
+				return "%s serves you, curt and businesslike." % npc_name
+			else:
+				return "%s greets you warmly, glad for your coin." % npc_name
+		Occupation.GUARD:
+			if trust_in_player < 25.0:
+				return "%s eyes you with open suspicion." % npc_name
+			elif trust_in_player < 60.0:
+				return "%s gives you a wary nod." % npc_name
+			else:
+				return "%s greets you like an old friend." % npc_name
+		_:
+			return ""
+
+func trust_label() -> String:
+	if trust_in_player >= 75.0:
+		return "Warm"
+	elif trust_in_player >= 55.0:
+		return "Friendly"
+	elif trust_in_player >= 40.0:
+		return "Neutral"
+	elif trust_in_player >= 20.0:
+		return "Wary"
+	else:
+		return "Hostile"
+
 # When does this NPC prefer to rest? Normally night; nocturnal folk flip it and
 # sleep through the day instead.
 func _rest_time() -> bool:
@@ -143,6 +185,8 @@ func simulate_day(_day: int, _season: String) -> void:
 	# Reset per-day one-shot log guards at the start of each day.
 	_slept_in_logged = false
 	_hungry_logged = false
+	# Trust settles gently toward neutral — a single event doesn't brand an NPC.
+	trust_in_player = lerpf(trust_in_player, 50.0, 0.08)
 
 func _apply_hourly_effects() -> void:
 	if _raid_cooldown > 0:
@@ -262,8 +306,9 @@ func _score_actions() -> Dictionary:
 	if food > 0:
 		s["eating"] = hunger * (1.5 if has_trait("glutton") else 1.2)
 
-	# FLEE — if a raid is happening nearby and you're not the type to stand.
-	var danger := WorldSimulation.danger_near(global_position)
+	# FLEE — if a raid is happening nearby, or the player is close and this NPC
+	# doesn't trust them, and you're not the type to stand.
+	var danger := maxf(WorldSimulation.danger_near(global_position), _player_threat())
 	if danger > 0.05 and occupation != Occupation.GUARD and occupation != Occupation.BANDIT:
 		var fl := danger * 70.0
 		if has_trait("cowardly"):
@@ -414,7 +459,7 @@ func _resolve_target(action: String) -> void:
 				_target_pos = town_center
 				_has_target = true
 		"fleeing":
-			var threat := _nearest_raider_pos()
+			var threat := _nearest_threat_pos()
 			_target_pos = global_position + (global_position - threat).normalized() * 220.0
 			_has_target = true
 		_:  # eating, idling → stay put
@@ -476,7 +521,7 @@ func _nearest_victim(radius: float) -> Node:
 			best = n
 	return best
 
-func _nearest_raider_pos() -> Vector2:
+func _nearest_threat_pos() -> Vector2:
 	var best := town_center
 	var best_d := INF
 	for n in WorldSimulation.npcs:
@@ -487,7 +532,30 @@ func _nearest_raider_pos() -> Vector2:
 			if d < best_d:
 				best_d = d
 				best = n.global_position
+	# The player counts as a threat too, if this NPC doesn't trust them.
+	if trust_in_player < 35.0:
+		var player := get_tree().get_first_node_in_group("player")
+		if player != null and is_instance_valid(player):
+			var d: float = global_position.distance_to(player.global_position)
+			if d < best_d:
+				best_d = d
+				best = player.global_position
 	return best
+
+# Distance- and trust-scaled fear the player specifically inspires in this NPC.
+# Only kicks in once trust drops below neutral-ish (35) and the player is close.
+func _player_threat(radius: float = 200.0) -> float:
+	if trust_in_player >= 35.0:
+		return 0.0
+	var player := get_tree().get_first_node_in_group("player")
+	if player == null or not is_instance_valid(player):
+		return 0.0
+	var d: float = global_position.distance_to(player.global_position)
+	if d > radius:
+		return 0.0
+	var proximity := (radius - d) / radius
+	var wariness := (35.0 - trust_in_player) / 35.0
+	return proximity * wariness
 
 # ── Surfacing emergent moments to the event log (throttled) ──────────────────
 
@@ -534,9 +602,9 @@ func get_status_short() -> String:
 
 func get_detail() -> String:
 	var trait_str := ", ".join(traits) if not traits.is_empty() else "none"
-	return "%s the %s %s [%s]\nDoing: %s\nHunger %d  Energy %d  Social %d  Fear %d\nCoin %d  Food %d%s\nTraits: %s" % [
+	return "%s the %s %s [%s]\nDoing: %s\nHunger %d  Energy %d  Social %d  Fear %d\nCoin %d  Food %d%s\nTrust in you: %d (%s)\nTraits: %s" % [
 		npc_name, species, occupation_name(), faction_name(),
 		current_action, int(hunger), int(energy), int(social), int(fear),
 		int(wealth), int(food),
-		("  (hungover)" if _hungover else ""), trait_str
+		("  (hungover)" if _hungover else ""), int(trust_in_player), trust_label(), trait_str
 	]

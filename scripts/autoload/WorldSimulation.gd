@@ -96,3 +96,16 @@ func danger_near(pos: Vector2, radius: float = 260.0) -> float:
 			if d <= radius:
 				threat += (radius - d) / radius
 	return threat
+
+# Word travels: when something happens to the player's trust with one NPC,
+# nearby witnesses adjust their own trust too — scaled down by distance so
+# only those close enough to have seen it are affected. `exclude` is the NPC
+# the event already applied full effect to directly.
+func gossip_near(pos: Vector2, delta: float, radius: float, exclude: Node = null) -> void:
+	for n in npcs:
+		if not is_instance_valid(n) or n == exclude:
+			continue
+		var d: float = pos.distance_to(n.global_position)
+		if d <= radius:
+			var weight: float = (radius - d) / radius
+			n.adjust_trust(delta * weight)
