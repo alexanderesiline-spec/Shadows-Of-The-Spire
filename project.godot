@@ -1,5 +1,5 @@
 ; Engine configuration file.
-; Generated for Shadows of the Spire - Godot 4.3+
+; Generated for Shadows of the Spire - Godot 4.6.3
 
 config_version=5
 
@@ -8,7 +8,7 @@ config_version=5
 config/name="Shadows of the Spire"
 config/description="A living world of autonomous NPCs — farmers rise at dawn, drunks sleep in, and bandits lie low when the guards are out. Every behaviour emerges from needs and personality, not script."
 run/main_scene="res://scenes/ui/RacePicker.tscn"
-config/features=PackedStringArray("4.3", "GL Compatibility")
+config/features=PackedStringArray("4.6", "GL Compatibility")
 config/icon="res://icon.svg"
 
 [autoload]
@@ -28,6 +28,7 @@ window/size/viewport_width=1280
 window/size/viewport_height=720
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
+window/handheld/orientation="sensor_landscape"
 
 [input]
 

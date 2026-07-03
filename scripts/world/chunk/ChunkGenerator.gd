@@ -38,7 +38,6 @@ static func generate_into(tile_map_layer: TileMapLayer, chunk_coord: Vector2i) -
 	var forced: String = _forced_chunks.get(chunk_coord, "")
 	var biome := BiomeMap.get_biome(chunk_coord)
 	var surfaces: Array = BIOME_SURFACES.get(int(biome), ["grass"])
-
 	var has_deltas := ChunkDeltaStore.has_deltas(chunk_coord)
 
 	for ty in range(TileConfig.CHUNK_SIZE_TILES):

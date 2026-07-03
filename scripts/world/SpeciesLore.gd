@@ -1,9 +1,9 @@
 extends Node
 
-# Shared species/faction lore math — pulled out of NPC.gd so the exact same
-# numbers drive both NPC-to-NPC relationships (NPC._seed_affinity) and
-# NPC-to-player trust (NPC.seed_trust_for_player), instead of two parallel
-# copies of the same table. Pure functions only; no state.
+# Shared species/faction lore math — used by both NPC-to-NPC relationships
+# (NPC._seed_affinity) and NPC-to-player trust (NPC.seed_trust_for_player),
+# instead of two parallel copies of the same table. Pure functions only; no
+# state.
 
 # Inter-species relationship seeds, straight from the world's lore — grievance
 # pairs start cooler, alliance pairs start warmer. Keyed by species pair sorted

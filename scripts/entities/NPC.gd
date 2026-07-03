@@ -7,6 +7,7 @@ extends CharacterBody2D
 # rising hunger, and the day phase. That's what makes the town feel alive.
 
 const Place = preload("res://scripts/world/Place.gd")
+const SpeciesLore = preload("res://scripts/world/SpeciesLore.gd")
 
 enum Faction { EMPIRE, RESISTANCE, NEUTRAL, BANDIT }
 enum Occupation { FARMER, GUARD, MERCHANT, TAVERNKEEP, BANDIT, LABORER, IDLER }
@@ -71,11 +72,6 @@ const FACTION_COLORS := {
 	Faction.NEUTRAL:    Color(0.70, 0.62, 0.48),
 	Faction.BANDIT:     Color(0.66, 0.24, 0.22),
 }
-
-# Species/faction seed math lives in SpeciesLore.gd, shared with NPC-to-player
-# trust seeding (seed_trust_for_player below) so both use the exact same
-# lore-derived numbers instead of two parallel tables.
-const SpeciesLore = preload("res://scripts/world/SpeciesLore.gd")
 
 var _name_label: Label
 var _action_label: Label
@@ -700,7 +696,7 @@ func _broadcast_worry() -> void:
 # drifts — warmer for a normal pair, cooler (friction) for a lore-grievance
 # species pair. Only the alphabetically-first name in the pair applies the
 # mutual update so a colocated pair isn't double-counted (both sides tick
-# "socializing" this hour) — a name comparison rather than instance_id both
+# "socializing" this hour) — a name comparison rather than instance-id
 # avoids double-counting and stays deterministic across a save/reload.
 func _process_colocation() -> void:
 	for n in WorldSimulation.npcs:

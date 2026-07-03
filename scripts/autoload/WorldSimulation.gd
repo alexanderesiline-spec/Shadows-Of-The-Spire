@@ -35,14 +35,14 @@ func register_npc(n: Node) -> void:
 func register_place(p: Node) -> void:
 	places.append(p)
 
+func register_poi(p: Node) -> void:
+	pois.append(p)
+
 func unregister_npc(n: Node) -> void:
 	npcs.erase(n)
 
 func unregister_place(p: Node) -> void:
 	places.erase(p)
-
-func register_poi(p: Node) -> void:
-	pois.append(p)
 
 func unregister_poi(p: Node) -> void:
 	pois.erase(p)

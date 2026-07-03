@@ -13,6 +13,10 @@ var active: bool = false
 
 func setup(shared_tile_set: TileSet, visual_scale: Vector2) -> void:
 	tile_map_layer.tile_set = shared_tile_set
+	# Nearest filtering lives on the CanvasItem (TileMapLayer), not on
+	# TileSetAtlasSource — matters most once a hi-res real atlas is being
+	# scaled down via `scale` below; keeps the placeholder crisp too.
+	tile_map_layer.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	scale = visual_scale
 
 func load_chunk(coord: Vector2i) -> void:

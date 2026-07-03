@@ -16,6 +16,10 @@ extends Node
 #     == LOGICAL_TILE_SIZE and no extra scale is needed at all.
 #
 # Callers (ChunkNode) read `visual_scale` and apply it to themselves.
+#
+# create_alternative_tile requires create_tile() to have already registered
+# the base atlas coordinate — order matters below (base cells first, then
+# variants) or Godot rejects the alternative.
 
 const TileConfig = preload("res://scripts/world/tile/TileConfig.gd")
 const TileSurfaceTable = preload("res://scripts/world/tile/TileSurfaceTable.gd")
@@ -29,7 +33,6 @@ static func build() -> Dictionary:
 
 static func _build_from_real_atlas() -> Dictionary:
 	var texture: Texture2D = load(TileConfig.ATLAS_PATH)
-	texture.set_meta("_shadows_filter_hint", "nearest")  # documents the required import setting
 
 	var region := Vector2i(TileConfig.ATLAS_SOURCE_TILE_PX, TileConfig.ATLAS_SOURCE_TILE_PX)
 	var tile_set := TileSet.new()
@@ -67,7 +70,6 @@ static func _build_placeholder() -> Dictionary:
 	var source := TileSetAtlasSource.new()
 	source.texture = texture
 	source.texture_region_size = cell
-	source.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 
 	_populate_source(source)
 	tile_set.add_source(source, SOURCE_ID)

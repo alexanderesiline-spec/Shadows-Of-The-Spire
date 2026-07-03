@@ -5,12 +5,12 @@ extends Node2D
 # places (homes, fields, tavern, market, guard post) and a cast of NPCs who go
 # about their day on their own. A bandit camp sits out in the treeline.
 #
-# This node's own local layout (every _place()/_npc() call below) is entirely
-# unchanged from the original flat-world version — WorldRoot repositions this
-# node's `.position` every frame to reflect world_pos's wrapped distance from
-# the player, and every child (NPCs, Places) inherits that for free through
+# This node's own local layout (every _place()/_npc() call below) mirrors the
+# original flat-world town exactly — WorldRoot repositions this node's
+# `.position` every frame to reflect world_pos's wrapped distance from the
+# player, and every child (NPCs, Places) inherits that for free through
 # Godot's ordinary transform hierarchy. Nothing about the town's internal
-# layout, or NPC.gd's proximity logic, needed to change for that to work.
+# layout, or NPC.gd's proximity logic, needs to change for that to work.
 
 const Place = preload("res://scripts/world/Place.gd")
 const NPC_ = preload("res://scripts/entities/NPC.gd")   # for enum access below
@@ -27,8 +27,8 @@ const TOWN_CENTER := Vector2(600, 380)
 const POI_CLEAR_RADIUS := 3
 
 # Canonical position in tile units — where this POI actually is in the large
-# world. Resolved at boot (see _ready) rather than hardcoded, so it stays
-# correct once the real continent PNG replaces the noise fallback.
+# world. Resolved at boot (see _place_in_world) rather than hardcoded, so it
+# stays correct once the real continent PNG replaces the noise fallback.
 var world_pos: Vector2 = Vector2.ZERO
 
 func _ready() -> void:
@@ -147,14 +147,14 @@ func _place(pname: String, type: int, pos: Vector2) -> Node:
 	add_child(p)
 	return p
 
-func _npc(pname: String, fac: int, occ: int, species: String, traits: Array,
+func _npc(pname: String, fac: int, occ: int, species: String, npc_traits: Array,
 		home: Node, work: Node) -> Node:
 	var n: Node = NPCScene.instantiate()
 	n.npc_name = pname
 	n.faction = fac
 	n.occupation = occ
 	n.species = species
-	n.traits = traits
+	n.traits = npc_traits
 	n.town_center = TOWN_CENTER
 	# Start the NPC at home, and vary needs so they don't act in lockstep.
 	if home != null:
