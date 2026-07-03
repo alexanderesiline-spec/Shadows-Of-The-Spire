@@ -1,41 +1,60 @@
 extends Node2D
 
-# Spawns a single living plains town on the edge of Oakspire's territory:
+# A single living plains town — a fixed Point of Interest sitting at `world_pos`
+# (canonical tile coordinates) on top of the chunk-streamed terrain, home to
 # places (homes, fields, tavern, market, guard post) and a cast of NPCs who go
 # about their day on their own. A bandit camp sits out in the treeline.
+#
+# This node's own local layout (every _place()/_npc() call below) is entirely
+# unchanged from the original flat-world version — WorldRoot repositions this
+# node's `.position` every frame to reflect world_pos's wrapped distance from
+# the player, and every child (NPCs, Places) inherits that for free through
+# Godot's ordinary transform hierarchy. Nothing about the town's internal
+# layout, or NPC.gd's proximity logic, needed to change for that to work.
 
 const Place = preload("res://scripts/world/Place.gd")
 const NPC_ = preload("res://scripts/entities/NPC.gd")   # for enum access below
 const NPCScene = preload("res://scenes/NPC.tscn")
 const PlaceScene = preload("res://scenes/Place.tscn")
+const TileConfig = preload("res://scripts/world/tile/TileConfig.gd")
+const ChunkGenerator = preload("res://scripts/world/chunk/ChunkGenerator.gd")
 
 const TOWN_CENTER := Vector2(600, 380)
 
+# How many chunks around the POI's anchor get forced to clear ground —
+# comfortably covers the town's ~2000px hand-placed footprint (chunk =
+# CHUNK_SIZE_TILES * LOGICAL_TILE_SIZE.x = 512px/side at defaults).
+const POI_CLEAR_RADIUS := 3
+
+# Canonical position in tile units — where this POI actually is in the large
+# world. Resolved at boot (see _ready) rather than hardcoded, so it stays
+# correct once the real continent PNG replaces the noise fallback.
+var world_pos: Vector2 = Vector2.ZERO
+
 func _ready() -> void:
-	_draw_terrain()
+	_place_in_world()
 	_spawn_town()
+	WorldSimulation.register_poi(self)
 
-func _draw_terrain() -> void:
-	var bg := ColorRect.new()
-	bg.color = Color(0.19, 0.36, 0.16)
-	bg.size = Vector2(2400, 2000)
-	bg.position = Vector2(-400, -400)
-	add_child(bg)
-	move_child(bg, 0)
+func _exit_tree() -> void:
+	WorldSimulation.unregister_poi(self)
 
-	# Treeline around the bandit camp (top-right).
-	_patch(Vector2(900, 600), Color(0.11, 0.26, 0.10), 260, 240)
-	_patch(Vector2(940, 640), Color(0.09, 0.22, 0.09), 160, 150)
-	# Woodland fringe (left) and a river.
-	_patch(Vector2(180, 300), Color(0.11, 0.26, 0.10), 130, 220)
-	_patch(Vector2(430, 620), Color(0.15, 0.35, 0.55), 380, 22)
+# Finds an actual Heartland chunk near a preferred spot (rather than
+# hardcoding blind) and force-clears the ground around it so the town never
+# spawns a lava tile under a house regardless of what the biome map says.
+func _place_in_world() -> void:
+	var chunk_size := TileConfig.CHUNK_SIZE_TILES
+	var preferred_chunk := Vector2i(1000 / chunk_size, 1000 / chunk_size)
+	var chunk := BiomeMap.find_nearest_biome_chunk(preferred_chunk, BiomeMap.Biome.HEARTLAND)
 
-func _patch(pos: Vector2, color: Color, w: float, h: float) -> void:
-	var rect := ColorRect.new()
-	rect.color = color
-	rect.size = Vector2(w, h)
-	rect.position = pos
-	add_child(rect)
+	world_pos = Vector2(
+		chunk.x * chunk_size + chunk_size / 2.0,
+		chunk.y * chunk_size + chunk_size / 2.0
+	)
+
+	for dx in range(-POI_CLEAR_RADIUS, POI_CLEAR_RADIUS + 1):
+		for dy in range(-POI_CLEAR_RADIUS, POI_CLEAR_RADIUS + 1):
+			ChunkGenerator.force_clear(Vector2i(chunk.x + dx, chunk.y + dy), "grass")
 
 func _spawn_town() -> void:
 	# ── Places ──────────────────────────────────────────────────────────────

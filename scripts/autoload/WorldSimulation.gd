@@ -7,16 +7,27 @@ extends Node
 
 var npcs: Array = []
 var places: Array = []
+var pois: Array = []   # Points of Interest (e.g. the town) — read by OverviewMap
 
 # Town-wide "how many guards are visibly about today" pressure. Bandits read it.
-# Fluctuates day to day (shift patterns + a random surge) so some days feel safer.
+# Fluctuates day to day with routine shift variance; conditional surges on top
+# of that (e.g. an imperial muster in response to recent raids) are WorldEvents'
+# job now, not a hidden dice roll here — see ImperialMusterEvent.
 var patrol_level: float = 1.0
+
+# Rolling count of bandit raids reported this "recently" window — read by
+# ImperialMusterEvent as the real-world-state trigger for a patrol surge, and
+# decayed daily so old raids stop mattering.
+var recent_raid_count: int = 0
 
 func _ready() -> void:
 	GameClock.hour_passed.connect(_on_hour_passed)
 	GameClock.day_passed.connect(_on_day_passed)
 	GameClock.season_changed.connect(_on_season_changed)
 	_roll_patrol_level()
+
+func report_raid() -> void:
+	recent_raid_count += 1
 
 func register_npc(n: Node) -> void:
 	npcs.append(n)
@@ -30,6 +41,12 @@ func unregister_npc(n: Node) -> void:
 func unregister_place(p: Node) -> void:
 	places.erase(p)
 
+func register_poi(p: Node) -> void:
+	pois.append(p)
+
+func unregister_poi(p: Node) -> void:
+	pois.erase(p)
+
 func _on_hour_passed(hour: int) -> void:
 	for n in npcs:
 		if is_instance_valid(n):
@@ -37,6 +54,7 @@ func _on_hour_passed(hour: int) -> void:
 
 func _on_day_passed(day: int, season: String) -> void:
 	_roll_patrol_level()
+	recent_raid_count = maxi(0, recent_raid_count - 1)   # yesterday's raids matter less each day
 	for n in npcs:
 		if is_instance_valid(n):
 			n.simulate_day(day, season)
@@ -45,11 +63,34 @@ func _on_season_changed(season: String) -> void:
 	EventBus.log_warning("== The season turns to %s ==" % season)
 
 func _roll_patrol_level() -> void:
-	# Base 1.0, occasional heavy-patrol days (muster, imperial inspection) up to ~2.5.
+	# Routine day-to-day shift variance. Conditional surges (imperial musters
+	# responding to real bandit activity) are added on top by WorldEvents.
 	patrol_level = 1.0 + randf() * 0.6
-	if randf() < 0.25:
-		patrol_level += 0.8 + randf() * 0.6
-		EventBus.log_warning("The town crawls with extra guards today.")
+
+# ── Faction-level aggregates, read by WorldEvents' condition checks ──────────
+
+func faction_population(faction: int) -> int:
+	var count := 0
+	for n in npcs:
+		if is_instance_valid(n) and n.faction == faction:
+			count += 1
+	return count
+
+func faction_average_trust(faction: int) -> float:
+	var total := 0.0
+	var count := 0
+	for n in npcs:
+		if is_instance_valid(n) and n.faction == faction:
+			total += n.trust_in_player
+			count += 1
+	return (total / count) if count > 0 else 50.0
+
+func faction_wealth_total(faction: int) -> float:
+	var total := 0.0
+	for n in npcs:
+		if is_instance_valid(n) and n.faction == faction:
+			total += n.wealth
+	return total
 
 # ── Context queries the NPC utility AI reads ─────────────────────────────────
 

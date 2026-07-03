@@ -4,7 +4,17 @@ extends Node2D
 # Places are dumb: they hold a type, a look, and an effect. All decision-making
 # lives in the NPC. Effects are applied per-hour while an NPC works/rests here.
 
-enum PlaceType { HOME, FIELD, TAVERN, MARKET, GUARD_POST, CAMP, SHRINE }
+enum PlaceType { HOME, FIELD, TAVERN, MARKET, GUARD_POST, CAMP, SHRINE, WALL, FARM_PLOT, HOUSE }
+
+# Buildable kinds a player can place via BuildMode, rather than a parallel
+# "Building" node class — reuses everything Place already does (WorldSimulation
+# registration, a visual, a type label).
+const BUILDABLE_TYPES := [PlaceType.WALL, PlaceType.FARM_PLOT, PlaceType.HOUSE]
+const BUILD_COSTS := {
+	PlaceType.WALL:      {"wood": 5},
+	PlaceType.FARM_PLOT: {"wood": 3},
+	PlaceType.HOUSE:     {"wood": 15, "stone": 10},
+}
 
 @export var place_name: String = "Place"
 @export var place_type: PlaceType = PlaceType.HOME
@@ -17,6 +27,9 @@ const TYPE_COLORS := {
 	PlaceType.GUARD_POST:Color(0.35, 0.42, 0.62),
 	PlaceType.CAMP:      Color(0.50, 0.28, 0.18),
 	PlaceType.SHRINE:    Color(0.72, 0.68, 0.40),
+	PlaceType.WALL:      Color(0.5, 0.5, 0.52),
+	PlaceType.FARM_PLOT: Color(0.48, 0.38, 0.24),
+	PlaceType.HOUSE:     Color(0.60, 0.48, 0.34),
 }
 
 const TYPE_LABELS := {
@@ -27,6 +40,9 @@ const TYPE_LABELS := {
 	PlaceType.GUARD_POST: "Guard Post",
 	PlaceType.CAMP: "Camp",
 	PlaceType.SHRINE: "Shrine",
+	PlaceType.WALL: "Wall",
+	PlaceType.FARM_PLOT: "Farm Plot",
+	PlaceType.HOUSE: "House",
 }
 
 func _ready() -> void:
@@ -87,6 +103,29 @@ func _build_visual() -> void:
 			])
 			cap.color = color.lightened(0.4)
 			add_child(cap)
+		PlaceType.WALL:
+			var wall := Polygon2D.new()
+			wall.polygon = PackedVector2Array([
+				Vector2(-26, 6), Vector2(26, 6), Vector2(26, -20), Vector2(-26, -20)
+			])
+			wall.color = color
+			add_child(wall)
+		PlaceType.FARM_PLOT:
+			for i in range(-2, 3):
+				var furrow := Polygon2D.new()
+				furrow.polygon = PackedVector2Array([
+					Vector2(-24, i * 6 - 2), Vector2(24, i * 6 - 2),
+					Vector2(24, i * 6 + 2), Vector2(-24, i * 6 + 2)
+				])
+				furrow.color = color.lightened(0.15 if i % 2 == 0 else -0.1)
+				add_child(furrow)
+		PlaceType.HOUSE:
+			var roof := Polygon2D.new()
+			roof.polygon = PackedVector2Array([
+				Vector2(-28, -16), Vector2(0, -36), Vector2(28, -16)
+			])
+			roof.color = color
+			add_child(roof)
 
 	var label := Label.new()
 	label.text = "%s" % place_name

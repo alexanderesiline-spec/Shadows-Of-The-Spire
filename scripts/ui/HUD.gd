@@ -1,5 +1,8 @@
 extends CanvasLayer
 
+const VirtualJoystickScript = preload("res://scripts/ui/VirtualJoystick.gd")
+const OverviewMapScript = preload("res://scripts/ui/OverviewMap.gd")
+
 const MAX_LOG_ENTRIES: int = 12
 const COLOR_INFO    := Color(0.85, 0.85, 0.85)
 const COLOR_WARNING := Color(1.0, 0.75, 0.2)
@@ -12,6 +15,7 @@ var _scroll: ScrollContainer
 var _status_panel: PanelContainer
 var _status_content: VBoxContainer
 var _status_visible: bool = false
+var _overview_map: Control
 
 var _inspector: Label
 
@@ -113,9 +117,14 @@ func _build_ui() -> void:
 	root.add_child(hint_bg)
 
 	var hint := Label.new()
-	hint.text = "WASD / Arrows — Move\nE — Greet   R — Threaten\nTab — Town roster\n+ / − — Time speed"
+	hint.text = "WASD / Arrows — Move\nE — Greet   R — Threaten   B — Build\nTab — Roster   M — Map\n+ / − — Time speed   F1 — Dev mode   F5 — Save"
 	hint.add_theme_font_size_override("font_size", 11)
 	hint_bg.add_child(hint)
+
+	_build_touch_controls(root)
+
+	_overview_map = OverviewMapScript.new()
+	add_child(_overview_map)
 
 	# ── World Status panel (Tab toggle, center) ────────────────────────────
 	_status_panel = PanelContainer.new()
@@ -146,12 +155,67 @@ func _build_ui() -> void:
 	close_hint.add_theme_color_override("font_color", Color(0.6, 0.6, 0.6))
 	status_vbox.add_child(close_hint)
 
+# Touch-only controls: a virtual joystick feeding the same ui_* actions
+# keyboard/gamepad already use (see VirtualJoystick.gd), plus TouchScreenButton
+# nodes that auto-bind to the existing interact/threaten actions with zero
+# custom tap-detection code. Only shown when a touchscreen is actually present.
+func _build_touch_controls(root: Control) -> void:
+	if not DisplayServer.is_touchscreen_available():
+		return
+
+	var viewport_size := get_viewport().get_visible_rect().size
+
+	var joystick := VirtualJoystickScript.new()
+	joystick.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	joystick.offset_left = 40
+	joystick.offset_top = -180
+	joystick.offset_right = 160
+	joystick.offset_bottom = -60
+	root.add_child(joystick)
+
+	# TouchScreenButton is a Node2D (screen-space, since it lives on a
+	# CanvasLayer), not a Control — positioned by absolute pixel offset from
+	# the viewport's actual size, not anchors.
+	var greet_btn := TouchScreenButton.new()
+	greet_btn.action = "interact"
+	greet_btn.position = Vector2(viewport_size.x - 190, viewport_size.y - 180)
+	_style_touch_button(greet_btn, "Greet", Color(0.3, 0.6, 0.35, 0.6))
+	add_child(greet_btn)
+
+	var threaten_btn := TouchScreenButton.new()
+	threaten_btn.action = "threaten"
+	threaten_btn.position = Vector2(viewport_size.x - 100, viewport_size.y - 180)
+	_style_touch_button(threaten_btn, "Threaten", Color(0.6, 0.25, 0.22, 0.6))
+	add_child(threaten_btn)
+
+func _style_touch_button(btn: TouchScreenButton, label_text: String, color: Color) -> void:
+	var img := Image.create_empty(80, 80, false, Image.FORMAT_RGBA8)
+	img.fill(color)
+	btn.texture_normal = ImageTexture.create_from_image(img)
+
+	var label := Label.new()
+	label.text = label_text
+	label.position = Vector2(4, 30)
+	label.size = Vector2(72, 20)
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.add_theme_font_size_override("font_size", 11)
+	btn.add_child(label)
+
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("status_panel"):
 		_status_visible = not _status_visible
 		_status_panel.visible = _status_visible
 		if _status_visible:
 			_refresh_status_panel()
+	elif event.is_action_pressed("overview_map"):
+		_overview_map.toggle()
+	elif event.is_action_pressed("toggle_dev_mode"):
+		GameConfig.toggle_dev_mode()
+	elif event.is_action_pressed("manual_save"):
+		if GameConfig.dev_mode:
+			SaveSystem.save_game()
+		else:
+			EventBus.log_warning("Manual save is a dev-mode tool — press F1 first.")
 	# Debug time controls: speed the world up / slow it down to watch days pass.
 	elif event is InputEventKey and event.pressed and not event.echo:
 		if event.keycode == KEY_EQUAL or event.keycode == KEY_KP_ADD:
@@ -166,6 +230,7 @@ func _process(_delta: float) -> void:
 	var player := get_tree().get_first_node_in_group("player")
 	if player:
 		_player_stats.text = player.get_status()
+		_overview_map.player_ref = player
 		var npc: Node = player.get_nearby_npc()
 		if npc and is_instance_valid(npc):
 			_inspector.text = npc.get_detail()

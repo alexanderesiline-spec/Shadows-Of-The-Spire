@@ -31,14 +31,16 @@ var food: float = 5.0
 # reputation number — the tavernkeep can adore the player while a guard stays
 # wary. Settles gently toward 50 each day so no single event brands them forever.
 var trust_in_player: float = 50.0
+var _player_trust_seeded: bool = false
 
 # Relationships with OTHER NPCs — lazily seeded on first contact, keyed by the
-# other NPC's instance id. Each entry: {"affinity": float 0-100, "type": String}.
-# `type` is empty unless explicitly assigned (e.g. "spouse") at spawn. This is
-# each NPC's own perception — it isn't mirrored automatically, so one side can
-# hold a grudge the other doesn't.
+# other NPC's npc_name (stable across a save/reload, unlike instance_id). Each
+# entry: {"affinity": float 0-100, "type": String}. `type` is empty unless
+# explicitly assigned (e.g. "spouse") at spawn. This is each NPC's own
+# perception — it isn't mirrored automatically, so one side can hold a grudge
+# the other doesn't.
 var relationships: Dictionary = {}
-var _colocation_cooldowns: Dictionary = {}   # other id -> hours remaining
+var _colocation_cooldowns: Dictionary = {}   # other npc_name -> hours remaining
 var _prev_fear: float = 0.0                  # for detecting sudden fear spikes
 
 # Assigned by the world spawner.
@@ -70,20 +72,10 @@ const FACTION_COLORS := {
 	Faction.BANDIT:     Color(0.66, 0.24, 0.22),
 }
 
-# Inter-species relationship seeds, straight from the world's lore — grievance
-# pairs start cooler, alliance pairs start warmer. Keyed by species pair sorted
-# alphabetically and joined with "|" so lookup doesn't care about call order.
-const SPECIES_RELATIONS := {
-	"bear-kin|bird-kin": 15.0,   # alliance — shared highland territories
-	"bird-kin|cat-kin": -15.0,   # grievance — old predator/prey tension
-	"bear-kin|wolf-kin": -15.0,  # grievance — territorial competition
-	"cat-kin|wolf-kin": 5.0,     # civil tolerance
-	"demon|elf": -30.0,          # full historical warfare
-}
-const SAME_FACTION_TRUST_BONUS := 10.0
-const FOX_KIN_UNIVERSAL_BONUS := 10.0    # considered lucky by every species
-const LIZARD_KIN_MEDIATOR_BONUS := 5.0   # neutral, trusted by every species
-const DEMON_UNIVERSAL_PENALTY := -15.0   # unliked by every non-demon species
+# Species/faction seed math lives in SpeciesLore.gd, shared with NPC-to-player
+# trust seeding (seed_trust_for_player below) so both use the exact same
+# lore-derived numbers instead of two parallel tables.
+const SpeciesLore = preload("res://scripts/world/SpeciesLore.gd")
 
 var _name_label: Label
 var _action_label: Label
@@ -191,32 +183,33 @@ func trust_label() -> String:
 
 # ── NPC-to-NPC relationships ──────────────────────────────────────────────────
 
-func _species_pair_key(a: String, b: String) -> String:
-	return (a + "|" + b) if a <= b else (b + "|" + a)
-
 # Where an NPC's opinion of another starts before any history between them —
 # species table + shared faction, straight from the lore's inter-species notes.
 func _seed_affinity(other: Node) -> float:
-	var base := 50.0
-	if faction == other.faction:
-		base += SAME_FACTION_TRUST_BONUS
-	if species != other.species:
-		var key := _species_pair_key(species, other.species)
-		if SPECIES_RELATIONS.has(key):
-			base += SPECIES_RELATIONS[key]
-	if species == "fox-kin" or other.species == "fox-kin":
-		base += FOX_KIN_UNIVERSAL_BONUS
-	if species == "lizard-kin" or other.species == "lizard-kin":
-		base += LIZARD_KIN_MEDIATOR_BONUS
-	if (species == "demon") != (other.species == "demon"):
-		base += DEMON_UNIVERSAL_PENALTY
-	return clampf(base, 0.0, 100.0)
+	return SpeciesLore.seed_affinity(species, faction, other.species, other.faction)
+
+# Seeds this NPC's trust in the PLAYER specifically, using the same species
+# lore as NPC-NPC affinity (so a Fox-kin player reads as universally likable,
+# a Demon player as universally distrusted, etc.) plus the player's race's own
+# explicit trust modifier (RaceData.trust_mod, e.g. Demon -5) scaled into the
+# 0-100 trust range. Lazy — called on first proximity, not at spawn, so
+# WorldMap._spawn_town() needs no reordering relative to race selection.
+func seed_trust_for_player(player: Node) -> void:
+	if _player_trust_seeded:
+		return
+	_player_trust_seeded = true
+	var delta := SpeciesLore.species_delta(species, player.species)
+	if "race_trust_mod" in player:
+		delta += player.race_trust_mod * 5.0
+	trust_in_player = clampf(trust_in_player + delta, 0.0, 100.0)
 
 func _relationship_entry(other: Node) -> Dictionary:
-	var id := other.get_instance_id()
-	if not relationships.has(id):
-		relationships[id] = {"affinity": _seed_affinity(other), "type": ""}
-	return relationships[id]
+	# Keyed by npc_name (already unique across the roster), not instance_id —
+	# instance ids are volatile across a save/reload, npc_name is stable.
+	var key: String = other.npc_name
+	if not relationships.has(key):
+		relationships[key] = {"affinity": _seed_affinity(other), "type": ""}
+	return relationships[key]
 
 func get_affinity(other: Node) -> float:
 	return _relationship_entry(other)["affinity"]
@@ -260,11 +253,11 @@ func closest_relationships() -> Array:
 	var best_friend_score := -INF
 	var worst_rival: Node = null
 	var worst_rival_score := INF
-	for id in relationships:
-		var n := instance_from_id(id)
-		if n == null or not is_instance_valid(n):
+	for npc_key in relationships:
+		var n := _find_npc_by_name(npc_key)
+		if n == null:
 			continue
-		var aff: float = relationships[id]["affinity"]
+		var aff: float = relationships[npc_key]["affinity"]
 		if aff > best_friend_score:
 			best_friend_score = aff
 			best_friend = n
@@ -272,6 +265,34 @@ func closest_relationships() -> Array:
 			worst_rival_score = aff
 			worst_rival = n
 	return [best_friend, worst_rival]
+
+func _find_npc_by_name(name: String) -> Node:
+	for n in WorldSimulation.npcs:
+		if is_instance_valid(n) and n.npc_name == name:
+			return n
+	return null
+
+# ── Persistence (SaveSystem) ─────────────────────────────────────────────────
+# relationships is already keyed by npc_name (see _relationship_entry), so it
+# serializes to plain JSON-safe data with no further conversion needed.
+
+func serialize_state() -> Dictionary:
+	return {
+		"hunger": hunger, "energy": energy, "fear": fear, "social": social,
+		"wealth": wealth, "food": food, "trust_in_player": trust_in_player,
+		"relationships": relationships,
+	}
+
+func apply_state(data: Dictionary) -> void:
+	hunger = data.get("hunger", hunger)
+	energy = data.get("energy", energy)
+	fear = data.get("fear", fear)
+	social = data.get("social", social)
+	wealth = data.get("wealth", wealth)
+	food = data.get("food", food)
+	trust_in_player = data.get("trust_in_player", trust_in_player)
+	if data.has("relationships"):
+		relationships = data["relationships"]
 
 # When does this NPC prefer to rest? Normally night; nocturnal folk flip it and
 # sleep through the day instead.
@@ -632,6 +653,7 @@ func _do_raid() -> void:
 	food += loot_f
 	hunger = clampf(hunger - 5.0, 0.0, 100.0)
 	_raid_cooldown = 10
+	WorldSimulation.report_raid()
 	EventBus.notable(npc_name, "%s robs %s of %d coin near the market!" % [
 		npc_name, (victim.npc_name if victim else "a stall"), int(loot_w)
 	], 2)
@@ -676,8 +698,10 @@ func _broadcast_worry() -> void:
 
 # When two NPCs both end up socializing near each other, their relationship
 # drifts — warmer for a normal pair, cooler (friction) for a lore-grievance
-# species pair. Only the lower-instance-id side applies the mutual update so a
-# colocated pair isn't double-counted (both sides tick "socializing" this hour).
+# species pair. Only the alphabetically-first name in the pair applies the
+# mutual update so a colocated pair isn't double-counted (both sides tick
+# "socializing" this hour) — a name comparison rather than instance_id both
+# avoids double-counting and stays deterministic across a save/reload.
 func _process_colocation() -> void:
 	for n in WorldSimulation.npcs:
 		if not is_instance_valid(n) or n == self:
@@ -686,15 +710,15 @@ func _process_colocation() -> void:
 			continue
 		if global_position.distance_to(n.global_position) > ARRIVE_RADIUS * 2.0:
 			continue
-		if get_instance_id() > n.get_instance_id():
+		if npc_name > n.npc_name:
 			continue
-		var id := n.get_instance_id()
+		var id: String = n.npc_name
 		if _colocation_cooldowns.has(id):
 			continue
 		_colocation_cooldowns[id] = 6   # hours before this pair can drift again
 
-		var key := _species_pair_key(species, n.species)
-		var is_friction: bool = species != n.species and SPECIES_RELATIONS.get(key, 0.0) < 0.0
+		var key := SpeciesLore.species_pair_key(species, n.species)
+		var is_friction: bool = species != n.species and SpeciesLore.SPECIES_RELATIONS.get(key, 0.0) < 0.0
 		if is_friction:
 			var self_friction := -3.0 * (2.0 if has_trait("jealous") else 1.0)
 			var other_friction := -3.0 * (2.0 if n.has_trait("jealous") else 1.0)
@@ -761,11 +785,17 @@ func _player_threat(radius: float = 200.0) -> float:
 	var player := get_tree().get_first_node_in_group("player")
 	if player == null or not is_instance_valid(player):
 		return 0.0
+	# Stealth scales how readily this NPC notices the player at all — a high
+	# Stealth player shrinks both the detection radius and the wariness felt.
+	var detection := 1.0
+	if "stats" in player and player.stats != null:
+		detection = player.stats.detection_multiplier()
+	var effective_radius := radius * detection
 	var d: float = global_position.distance_to(player.global_position)
-	if d > radius:
+	if d > effective_radius:
 		return 0.0
-	var proximity := (radius - d) / radius
-	var wariness := (35.0 - trust_in_player) / 35.0
+	var proximity := (effective_radius - d) / effective_radius
+	var wariness := (35.0 - trust_in_player) / 35.0 * detection
 	return proximity * wariness
 
 # ── Surfacing emergent moments to the event log (throttled) ──────────────────

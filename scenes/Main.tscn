@@ -1,10 +1,12 @@
-[gd_scene load_steps=6 format=3]
+[gd_scene load_steps=8 format=3]
 
 [ext_resource type="Script" path="res://scripts/Main.gd" id="1_main"]
 [ext_resource type="PackedScene" path="res://scenes/WorldMap.tscn" id="2_worldmap"]
 [ext_resource type="PackedScene" path="res://scenes/Player.tscn" id="3_player"]
 [ext_resource type="Script" path="res://scripts/ui/HUD.gd" id="4_hud"]
 [ext_resource type="Script" path="res://scripts/world/DayNight.gd" id="5_daynight"]
+[ext_resource type="Script" path="res://scripts/world/WorldRoot.gd" id="6_worldroot"]
+[ext_resource type="Script" path="res://scripts/world/chunk/ChunkManager.gd" id="7_chunkmanager"]
 
 [node name="Main" type="Node2D"]
 script = ExtResource("1_main")
@@ -12,10 +14,17 @@ script = ExtResource("1_main")
 [node name="DayNight" type="CanvasModulate" parent="."]
 script = ExtResource("5_daynight")
 
-[node name="WorldMap" parent="." instance=ExtResource("2_worldmap")]
+[node name="WorldRoot" type="Node2D" parent="."]
+script = ExtResource("6_worldroot")
 
-[node name="Player" parent="." instance=ExtResource("3_player")]
-position = Vector2(310.0, 280.0)
+[node name="ChunkManager" type="Node2D" parent="WorldRoot"]
+script = ExtResource("7_chunkmanager")
+
+[node name="PointsOfInterest" type="Node2D" parent="WorldRoot"]
+
+[node name="WorldMap" parent="WorldRoot/PointsOfInterest" instance=ExtResource("2_worldmap")]
+
+[node name="Player" parent="WorldRoot" instance=ExtResource("3_player")]
 
 [node name="HUD" type="CanvasLayer" parent="."]
 layer = 10
